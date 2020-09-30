@@ -1,0 +1,229 @@
+---
+title: "Replicating Regressions Brady et al (2017)"
+output: html_notebook
+---
+
+
+```{r}
+library(rstanarm)
+options(mc.cores = parallel::detectCores())
+
+library(bayesplot)
+library(tidyr)
+library(geeM)
+library(ggplot2)
+library(dplyr)
+```
+
+## Study 1
+
+```{r}
+dfo <- read.csv("MEC_SASpreproc_Climate.csv", stringsAsFactors = FALSE, header = TRUE)
+```
+
+```{r}
+dfo$media_L <- ifelse(dfo$media>0, 1, 0)
+dfo$url_L <- ifelse(dfo$url>0, 1, 0)
+```
+
+```{r}
+fit_un <- stan_glm.nb(count ~ ACount_unq + MCount_unq + shared + followers + user.verified + media_L + url_L, data = dfo, algorithm = "optimizing")#iter = 250, chains = 2)
+data.frame(coef = round(exp(coef(fit_un)),2), SE = round(fit_un$ses,2))
+```
+
+```{r}
+dfo$shared <- scale(dfo$shared, scale = FALSE)
+dfo$ACount_unq <- scale(dfo$ACount_unq, scale = FALSE)
+dfo$MCount_unq <- scale(dfo$MCount_unq, scale = FALSE)
+dfo$followers <- scale(dfo$followers, scale = FALSE)
+dfo$media_L <- ifelse(dfo$media>0, 1, 0)
+dfo$url_L <- ifelse(dfo$url>0, 1, 0)
+```
+
+```{r}
+fit <- stan_glm.nb(count ~ ACount_unq + MCount_unq + shared + followers + user.verified + media_L + url_L, data = dfo, algorithm = "optimizing")#iter = 250, chains = 2)
+data.frame(coef = round(exp(coef(fit)),2), SE = round(fit$ses,2))
+```
+
+```{r, fig.width=5, fig.height=5}
+mcmc_intervals(as.matrix(fit)[,c(1,2,3,4,5,8)], transformations = exp) + vline_at(1, linetype='dashed')
+```
+
+```{r, fig.width=5, fig.height=5}
+summary(fit, digits = 2)
+```
+
+## Study 2
+
+### Two regressions
+
+```{r}
+df <- read.csv("gee_modDist_C.csv", stringsAsFactors = FALSE, header = TRUE)
+df$userverified <- df$user.verified
+df$user.verified <- NULL
+df$media <- ifelse(df$media>0, 1, 0)
+df$url <- ifelse(df$url>0, 1, 0)
+df$ingroup <- ifelse(df$ingroup>0, 1, 0)
+```
+
+```{r}
+df_in <- df[df$ingroup==1,]
+df_in$shared <- df_in$shared - mean(df_in$shared, na.rm = TRUE)
+df_in$ACount_unq <- df_in$ACount_unq - mean(df_in$ACount_unq, na.rm = TRUE)
+df_in$MCount_unq <- df_in$MCount_unq - mean(df_in$MCount_unq, na.rm = TRUE)
+df_in$followers <- df_in$followers - mean(df_in$followers, na.rm = TRUE)
+```
+
+```{r}
+fit_in <- stan_glm.nb(count ~ ACount_unq + MCount_unq + shared + followers + userverified + media + url, data = df_in, algorithm = "optimizing")
+
+res_in <- data.frame(Coef = round(exp(coef(fit_in)),2), SE = round(fit_in$ses,2))
+res_in
+```
+
+```{r, fig.width=5, fig.height=5}
+mcmc_intervals(as.matrix(fit_in)[,c(1,2,3,4,5,8)], transformations = exp) + vline_at(1, linetype='dashed')
+```
+
+```{r}
+df_out <- df[df$ingroup==0,]
+df_out$shared <- df_out$shared - mean(df_out$shared, na.rm = TRUE)
+df_out$ACount_unq <- df_out$ACount_unq - mean(df_out$ACount_unq, na.rm = TRUE)
+df_out$MCount_unq <- df_out$MCount_unq - mean(df_out$MCount_unq, na.rm = TRUE)
+df_out$followers <- df_out$followers - mean(df_out$followers, na.rm = TRUE)
+df_out$count <- as.integer(round(df_out$count))
+```
+
+```{r}
+fit_out <- stan_glm.nb(count ~ ACount_unq + MCount_unq + shared + followers + userverified + media + url, data = df_out, algorithm = "optimizing")
+
+res_out <- data.frame(Coef = round(exp(coef(fit_out)),2), SE = round(fit_out$ses,2))
+res_out
+```
+
+```{r, fig.width=5, fig.height=5}
+mcmc_intervals(as.matrix(fit_out)[,c(1,2,3,4,5,8)], transformations = exp) + vline_at(1, linetype='dashed')
+```
+
+
+
+```{r, fig.width=5, fig.height=5}
+res_in$type <- rep("ingroup", nrow(res_in))
+res_in$var <- rownames(res_in)
+rownames(res_in) <- c()
+
+res_out$type <- rep("outgrop", nrow(res_out))
+res_out$var <- rownames(res_out)
+rownames(res_out) <- c()
+```
+
+
+```{r, fig.width=6, fig.height=3}
+res <- rbind(res_in, res_out)
+res <- res %>% filter(var != "userverified") %>% filter(var != "media")
+
+res$var <- factor(res$var, levels = rev(c("(Intercept)", "MCount_unq", "ACount_unq", "shared", "followers", "url")))
+
+
+levels(res$var)[levels(res$var)=="MCount_unq"] <- "moral"
+levels(res$var)[levels(res$var)=="ACount_unq"] <- "emotional"
+levels(res$var)[levels(res$var)=="shared"] <- "moralemotional"
+
+ggplot(data = res, aes(x = var, y = Coef, color = type)) + geom_hline(yintercept=1, alpha = 0.5) + geom_point() + geom_errorbar(aes(ymin = I(exp(log(Coef)+2*SE)), ymax = I(exp(log(Coef)-2*SE))),width = 0.1) + coord_flip() 
+```
+
+
+## regressing count percentage
+
+```{r}
+df <- read.csv("gee_modDist_C.csv", stringsAsFactors = FALSE, header = TRUE)
+df$userverified <- df$user.verified
+df$user.verified <- NULL
+df$count <- as.integer(round(df$count))
+df$twid_first <- as.character(df$twid_first)
+df$media <- ifelse(df$media>0, 1, 0)
+df$url <- ifelse(df$url>0, 1, 0)
+df$ingroup <- ifelse(df$ingroup>0, 1, 0)
+```
+
+```{r}
+
+df_per <- filter(df, ingroup == 1)
+df$per <- df$count/count_total
+
+fit_per <- stan_glm.nb(per ~ ACount_unq + MCount_unq + shared + followers + userverified + media + url, data = df_per, algorithm = "optimizing")
+data.frame(Coef = round(exp(coef(fit2))), SE = round(df$ses))
+#data.frame(Coef = round(exp(coef(fit2)),2), Lower = round(exp(coef(fit2)-2*fit2$ses),2), Upper = round(exp(coef(fit2)+2*fit2$ses),2))
+```
+
+## Ignoring duplicates
+
+```{r}
+df <- read.csv("gee_modDist_C.csv", stringsAsFactors = FALSE, header = TRUE)
+df$userverified <- df$user.verified
+df$user.verified <- NULL
+df$count <- as.integer(round(df$count))
+df$twid_first <- as.character(df$twid_first)
+df$media <- ifelse(df$media>0, 1, 0)
+df$url <- ifelse(df$url>0, 1, 0)
+df$ingroup <- ifelse(df$ingroup>0, 1, 0)
+```
+
+```{r}
+fit2 <- stan_glm.nb(count ~ ACount_unq + MCount_unq + shared + ingroup + ACount_unq:ingroup + MCount_unq:ingroup + shared:ingroup + followers + userverified + media + url, data = df, algorithm = "optimizing")
+data.frame(Coef = round(exp(coef(fit2)),2), SE = round(fit2$ses,2))
+#data.frame(Coef = round(exp(coef(fit2)),2), Lower = round(exp(coef(fit2)-2*fit2$ses),2), Upper = round(exp(coef(fit2)+2*fit2$ses),2))
+```
+
+## GEE
+
+```{r}
+library(reticulate)
+use_python("C:/Users/Juanl/Anaconda3/python.exe")
+```
+
+```{python}
+import statsmodels.api as sm
+import statsmodels.formula.api as smf
+#import numpy as np
+#import pandas as pd
+
+fam = sm.families.NegativeBinomial()
+
+ind = sm.cov_struct.Exchangeable()
+
+mod = smf.gee("count ~ ACount_unq + MCount_unq + shared + ingroup + ACount_unq:ingroup + MCount_unq:ingroup + shared:ingroup + followers + userverified + media + url", "twid_first", r.df, cov_struct=ind, family=fam)
+
+res = mod.fit()
+
+print(res.summary())
+```
+
+
+```{python}
+resdf = pd.concat([np.exp(res.params), res.bse], axis = 1)
+resdf.columns = ['Coef', 'SE']
+
+resdf.round(decimals = 2)
+```
+
+```{python}
+ind.summary()
+```
+
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
